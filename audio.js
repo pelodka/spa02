@@ -1,88 +1,121 @@
-// audio.js — SPA background music and SFX
-
-// 1. Background music (looped, starts on first interaction)
-let bgm = new Audio('audio/background.mp3');
-bgm.loop = true;
-bgm.volume = 0.6;
-
-let bgmStarted = false;
-
-// Helper to start BGM only once
-function startBgm() {
-  if (!bgmStarted) {
-    bgm.play().catch(()=>{});
-    bgmStarted = true;
-  }
-}
-
-// --- 2. SFX PATHS ---
-const sfxPaths = {
-  jump:      'audio/jump.mp3',
-  interact:  'audio/interact.mp3',
-  chestOpen: 'audio/chest_open.mp3',
-  victory:   'audio/victory.mp3',
-  dragon:    'audio/dragon.mp3',
-  explosion: 'audio/explosion.mp3',
-  evillaugh: 'audio/evillaugh.mp3',
-  collect:   'audio/collect.mp3',
-  // Add any additional SFX here as needed
+const BGM_FILES = {
+  background: 'audio/background.mp3',
+  minigame:   'audio/minigame.mp3'
 };
+const BGM_STARTED_KEY    = 'bgmStarted';
+const BGM_START_TIME_KEY = 'bgmStartTime';
+let currentBgmType = 'background';
 
-// --- 3. SFX cache and play helper ---
+let bgm = new Audio(BGM_FILES.background);
+bgm.loop = true;
+bgm.volume = 0.5;
+
+// SFX
+const sfxPaths = {
+  jump:         'audio/jump.mp3',
+  interact:     'audio/interact.mp3',
+  chestOpen:    'audio/chest_open.mp3',
+  victory:      'audio/victory.mp3',
+  explosion:    'audio/explosion.mp3',
+  evilLaugh:    'audio/evil-laugh.mp3',
+  collect:      'audio/collect.mp3'
+};
 const sfxCache = {};
-
 function playSfx(name) {
-  startBgm(); // ensure BGM starts on first interaction
   const path = sfxPaths[name];
-  if (!path) return;
-  let snd = sfxCache[name];
-  if (!snd) {
-    snd = new Audio(path);
-    sfxCache[name] = snd;
+  if (!path) return null;
+  let sound = sfxCache[name];
+  if (!sound) {
+    sound = new Audio(path);
+    sfxCache[name] = sound;
   }
-  snd.currentTime = 0;
-  snd.play().catch(()=>{});
+  sound.currentTime = 0;
+  sound.play().catch(() => {});
+  return sound;
 }
-
-// --- 4. Scene-specific hooks for your SPA (optional, use in your scene code) ---
 
 window.audio = {
-  playJump:    () => playSfx('jump'),
-  playInteract:() => playSfx('interact'),
-  playChestOpen:() => {
-    playSfx('chestOpen');
-    // Return audio object for "ended" listeners if needed
-    let snd = sfxCache['chestOpen'];
-    if (!snd) { snd = new Audio(sfxPaths['chestOpen']); sfxCache['chestOpen'] = snd; }
-    return snd;
-  },
-  playVictory: () => playSfx('victory'),
-  playDragon:  () => playSfx('dragon'),
-  playExplosion: () => playSfx('explosion'),
-  playEvillaugh: () => playSfx('evillaugh'),
-  playCollect: () => playSfx('collect'),
-  // If you add more SFX, expose them here too!
-  stopBgm:     () => { bgm.pause(); bgm.currentTime = 0; bgmStarted = false; },
-  switchBgm:   (track) => {
-    if (bgm) { bgm.pause(); }
-    if (track === 'minigame') {
-      bgm = new Audio('audio/minigame.mp3'); // If you have a minigame track!
-    } else {
-      bgm = new Audio('audio/background.mp3');
+  playJump:         () => playSfx('jump'),
+  playInteract:     () => playSfx('interact'),
+  playChestOpen:    () => playSfx('chestOpen'),
+  playVictory:      () => playSfx('victory'),
+  playExplosion:    () => playSfx('explosion'),
+  playEvilLaugh:    () => playSfx('evilLaugh'),
+  playCollect:      () => playSfx('collect'),
+  stopBgm:          () => { bgm.pause(); bgm.currentTime = 0; },
+  switchBgm: function(type) {
+    if (type === 'minigame' && currentBgmType !== 'minigame') {
+      try { window.sessionStorage.setItem('bgmLastPosition', bgm.currentTime); } catch(e) {}
+      bgm.pause();
+      bgm = new Audio(BGM_FILES.minigame);
+      bgm.loop = true;
+      bgm.volume = 0.5;
+      bgm.currentTime = 0;
+      bgm.play().catch(() => {});
+      currentBgmType = 'minigame';
     }
-    bgm.loop = true;
-    bgm.volume = 0.6;
-    startBgm();
   },
-  restoreBgm:  () => {
-    bgm.pause();
-    bgm = new Audio('audio/background.mp3');
-    bgm.loop = true;
-    bgm.volume = 0.6;
-    startBgm();
+  restoreBgm: function() {
+    if (currentBgmType === 'minigame') {
+      bgm.pause();
+      bgm = new Audio(BGM_FILES.background);
+      bgm.loop = true;
+      bgm.volume = 0.5;
+      try {
+        const resume = parseFloat(window.sessionStorage.getItem('bgmLastPosition')) || 0;
+        bgm.addEventListener('loadedmetadata', () => {
+          bgm.currentTime = resume;
+          bgm.play().catch(() => {});
+        });
+        if (bgm.readyState >= 1) {
+          bgm.currentTime = resume;
+          bgm.play().catch(() => {});
+        }
+      } catch(e) { bgm.play().catch(() => {}); }
+      currentBgmType = 'background';
+    }
   }
 };
 
-// Start BGM on first input
-window.addEventListener('pointerdown', startBgm, { once: true });
-window.addEventListener('keydown', startBgm, { once: true });
+document.addEventListener('DOMContentLoaded', () => {
+  let bgmResumeHandler;
+  const alreadyStarted = sessionStorage.getItem(BGM_STARTED_KEY) === 'true';
+  const now            = Date.now();
+  const startTimestamp = parseInt(sessionStorage.getItem(BGM_START_TIME_KEY), 10);
+  let resumeTime = 0;
+
+  // Only allow music to start from scene2.html after user action!
+  function isStartScene() {
+    // Adjust if your URL/path changes!
+    return window.location.pathname.includes('scene2.html');
+  }
+
+  if (alreadyStarted && !isNaN(startTimestamp)) {
+    let elapsed = (now - startTimestamp) / 1000;
+    resumeTime = elapsed;
+  }
+
+  function startOrResumeBgm() {
+    if (!alreadyStarted && isStartScene()) {
+      // Only start in scene2.html!
+      sessionStorage.setItem(BGM_STARTED_KEY, 'true');
+      sessionStorage.setItem(BGM_START_TIME_KEY, Date.now().toString());
+      bgm.currentTime = 0;
+      bgm.play().catch(()=>{});
+    } else if (alreadyStarted) {
+      bgm.currentTime = bgm.duration ? resumeTime % bgm.duration : 0;
+      bgm.play().catch(()=>{});
+    }
+    // Remove listeners
+    window.removeEventListener('keydown', bgmResumeHandler);
+    window.removeEventListener('mousedown', bgmResumeHandler);
+    window.removeEventListener('touchstart', bgmResumeHandler);
+  }
+
+  bgmResumeHandler = startOrResumeBgm;
+  if (isStartScene() || alreadyStarted) {
+    window.addEventListener('keydown', bgmResumeHandler);
+    window.addEventListener('mousedown', bgmResumeHandler);
+    window.addEventListener('touchstart', bgmResumeHandler);
+  }
+});
